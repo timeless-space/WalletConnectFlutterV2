@@ -31,7 +31,7 @@ class StyleConstants {
   static const double magic64 = 64;
 
   // Width
-  static const double maxWidth = 400;
+  static const double maxWidth = 500;
 
   // Text styles
   static const TextStyle titleText = TextStyle(
@@ -42,6 +42,11 @@ class StyleConstants {
   static const TextStyle subtitleText = TextStyle(
     color: Colors.black,
     fontSize: linear24,
+    fontWeight: FontWeight.w600,
+  );
+  static const TextStyle paragraph = TextStyle(
+    color: Colors.black,
+    fontSize: linear16,
     fontWeight: FontWeight.w600,
   );
   static const TextStyle buttonText = TextStyle(

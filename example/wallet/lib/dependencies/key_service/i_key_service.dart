@@ -2,7 +2,7 @@ import 'package:walletconnect_flutter_v2_wallet/dependencies/key_service/chain_k
 
 abstract class IKeyService {
   /// Returns a list of all the keys.
-  List<ChainKey> getKeys();
+  Future<List<ChainKey>> setKeys();
 
   /// Returns a list of all the chain ids.
   List<String> getChains();
@@ -14,4 +14,12 @@ abstract class IKeyService {
 
   /// Returns a list of all the accounts in namespace:chainId:address format.
   List<String> getAllAccounts();
+
+  Future<void> createNewWallet();
+
+  Future<void> loadDefaultWallet();
+
+  Future<void> restoreWallet({required String mnemonic});
+
+  Future<void> deleteWallet();
 }

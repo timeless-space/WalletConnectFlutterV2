@@ -40,54 +40,46 @@ class SessionsPageState extends State<SessionsPage> {
   Widget build(BuildContext context) {
     final List<SessionData> sessions = _activeSessions.values.toList();
 
-    return Row(
-      mainAxisSize: MainAxisSize.max,
-      children: [
-        Container(
-          constraints: const BoxConstraints(
-            maxWidth: 150,
-          ),
-          decoration: const BoxDecoration(
-            border: Border(
-              right: BorderSide(
-                color: StyleConstants.grayColor,
-              ),
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(
+          maxWidth: StyleConstants.maxWidth,
+        ),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SingleChildScrollView(
+            child: ExpansionPanelList(
+              elevation: 0.0,
+              materialGapSize: 0.0,
+              expansionCallback: (int index, bool isExpanded) {
+                setState(() {
+                  _selectedSession = !isExpanded ? '' : sessions[index].topic;
+                });
+              },
+              children: sessions
+                  .map(
+                    (session) => ExpansionPanel(
+                      canTapOnHeader: true,
+                      isExpanded: _selectedSession == session.topic,
+                      backgroundColor: Colors.blue.withOpacity(0.2),
+                      headerBuilder: (context, isExpanded) {
+                        return SessionItem(
+                          key: ValueKey(session.topic),
+                          session: session,
+                        );
+                      },
+                      body: Container(
+                        height: MediaQuery.of(context).size.height - 300.0,
+                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                        child: _buildSessionView(),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
-          padding: const EdgeInsets.only(
-            top: StyleConstants.linear8,
-            bottom: StyleConstants.linear8,
-          ),
-          child: ListView.separated(
-            itemBuilder: (BuildContext context, int index) {
-              return SessionItem(
-                key: ValueKey(sessions[index].topic),
-                session: sessions[index],
-                onTap: () {
-                  setState(() {
-                    _selectedSession = sessions[index].topic;
-                  });
-                },
-              );
-            },
-            separatorBuilder: (BuildContext context, int index) {
-              return const Divider();
-            },
-            itemCount: sessions.length,
-          ),
         ),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.only(
-              left: StyleConstants.linear8,
-              top: StyleConstants.linear8,
-              right: StyleConstants.linear8,
-              bottom: StyleConstants.linear72,
-            ),
-            child: _buildSessionView(),
-          ),
-        ),
-      ],
+      ),
     );
   }
 

@@ -20,7 +20,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   PackageInfo.setMockInitialValues(
     appName: 'walletconnect_flutter_v2',
-    packageName: 'sdk.test',
+    packageName: 'com.walletconnect.flutterdapp',
     version: '1.0',
     buildNumber: '2',
     buildSignature: 'buildSignature',
@@ -39,7 +39,7 @@ void main() {
         ]);
     expect(
       Uri.decodeFull(response.toString()),
-      'wc:abc@2?relay-protocol=irn&symKey=xyz&methods=[wc_sessionPropose],[wc_authRequest,wc_authBatchRequest]',
+      'wc:abc@2?relay-protocol=irn&symKey=xyz&methods=wc_sessionPropose,wc_authRequest,wc_authBatchRequest',
     );
 
     URIParseResult parsed = WalletConnectUtils.parseUri(response);
@@ -63,7 +63,7 @@ void main() {
     );
     expect(
       Uri.decodeFull(response.toString()),
-      'wc:abc@2?relay-protocol=irn&symKey=xyz&methods=[]',
+      'wc:abc@2?relay-protocol=irn&symKey=xyz',
     );
 
     parsed = WalletConnectUtils.parseUri(response);

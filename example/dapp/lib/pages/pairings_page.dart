@@ -75,7 +75,7 @@ class PairingsPageState extends State<PairingsPage> {
                             );
                             Navigator.of(context).pop();
                           } catch (e) {
-                            debugPrint(e.toString());
+                            debugPrint('[SampleDapp] ${e.toString()}');
                           }
                         },
                       ),
@@ -88,32 +88,14 @@ class PairingsPageState extends State<PairingsPage> {
         )
         .toList();
 
-    final List<Widget> children = [
-      const SizedBox(
-        height: StyleConstants.linear48,
-      ),
-      const Text(
-        StringConstants.pairings,
-        style: StyleConstants.titleText,
-        textAlign: TextAlign.center,
-      ),
-      const SizedBox(
-        height: StyleConstants.linear48,
-      ),
-    ];
-    children.addAll(pairingItems);
-
     return Center(
       child: Container(
-        // color: StyleConstants.primaryColor,
-        padding: const EdgeInsets.all(
-          StyleConstants.linear8,
-        ),
         constraints: const BoxConstraints(
           maxWidth: StyleConstants.maxWidth,
         ),
         child: ListView(
-          children: children,
+          padding: const EdgeInsets.all(0.0),
+          children: pairingItems,
         ),
       ),
     );

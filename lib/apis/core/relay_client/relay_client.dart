@@ -187,33 +187,34 @@ class RelayClient implements IRelayClient {
   /// PRIVATE FUNCTIONS ///
 
   Future<void> _connect({String? relayUrl}) async {
-    core.logger.t('RelayClient Internal: Connecting to relay');
     if (isConnected) {
       return;
     }
+
+    core.relayUrl = relayUrl ?? core.relayUrl;
+    core.logger.d('[$runtimeType] Connecting to relay ${core.relayUrl}');
 
     // If we have tried connecting to the relay before, disconnect
     if (_active) {
       await _disconnect();
     }
 
-    // Connect and track the connection progress, then start the heartbeat
-    _connectingFuture = _createJsonRPCProvider();
-    await _connectingFuture;
-    _subscribeToHeartbeat();
-
-    // If it didn't connect, and the relayUrl is the default,
-    // recursively try the fallback
-    core.relayUrl = relayUrl ?? core.relayUrl;
-    if (!isConnected &&
-        core.relayUrl == WalletConnectConstants.DEFAULT_RELAY_URL) {
-      core.relayUrl = WalletConnectConstants.FALLBACK_RELAY_URL;
-      await _connect();
-
-      // If we still didn't connect, reset the relayUrl to the default
-      if (!isConnected) {
-        core.relayUrl = WalletConnectConstants.DEFAULT_RELAY_URL;
-      }
+    try {
+      // Connect and track the connection progress, then start the heartbeat
+      _connectingFuture = _createJsonRPCProvider();
+      await _connectingFuture;
+      _connecting = false;
+      _subscribeToHeartbeat();
+      //
+    } on TimeoutException catch (e) {
+      core.logger.d('[$runtimeType] Connect timeout: $e');
+      onRelayClientError.broadcast(ErrorEvent('Connection to relay timeout'));
+      _connecting = false;
+      _connect();
+    } catch (e) {
+      core.logger.d('[$runtimeType] Connect error: $e');
+      onRelayClientError.broadcast(ErrorEvent(e));
+      _connecting = false;
     }
   }
 
@@ -236,68 +237,64 @@ class RelayClient implements IRelayClient {
   Future<void> _createJsonRPCProvider() async {
     _connecting = true;
     _active = true;
-    var auth = await core.crypto.signJWT(core.relayUrl);
+    final auth = await core.crypto.signJWT(core.relayUrl);
     core.logger.t('Signed JWT: $auth');
-    try {
-      final url = WalletConnectUtils.formatRelayRpcUrl(
-        protocol: WalletConnectConstants.CORE_PROTOCOL,
-        version: WalletConnectConstants.CORE_VERSION,
-        relayUrl: core.relayUrl,
-        sdkVersion: WalletConnectConstants.SDK_VERSION,
-        auth: auth,
-        projectId: core.projectId,
-        packageName: (await WalletConnectUtils.getPackageName()),
-      );
+    final url = WalletConnectUtils.formatRelayRpcUrl(
+      protocol: WalletConnectConstants.CORE_PROTOCOL,
+      version: WalletConnectConstants.CORE_VERSION,
+      relayUrl: core.relayUrl,
+      sdkVersion: WalletConnectConstants.SDK_VERSION,
+      auth: auth,
+      projectId: core.projectId,
+      packageName: (await WalletConnectUtils.getPackageName()),
+    );
 
-      if (jsonRPC != null) {
-        await jsonRPC!.close();
-        jsonRPC = null;
-      }
-
-      core.logger.t('Initializing WebSocket with $url');
-      await socketHandler.setup(url: url);
-      await socketHandler.connect();
-
-      jsonRPC = Peer(socketHandler.channel!);
-
-      jsonRPC!.registerMethod(
-        _buildMethod(JSON_RPC_SUBSCRIPTION),
-        _handleSubscription,
-      );
-      jsonRPC!.registerMethod(
-        _buildMethod(JSON_RPC_SUBSCRIBE),
-        _handleSubscribe,
-      );
-      jsonRPC!.registerMethod(
-        _buildMethod(JSON_RPC_UNSUBSCRIBE),
-        _handleUnsubscribe,
-      );
-
-      if (jsonRPC!.isClosed) {
-        throw const WalletConnectError(
-          code: 0,
-          message: 'WebSocket closed',
-        );
-      }
-
-      jsonRPC!.listen();
-
-      // When jsonRPC closes, emit the event
-      _handledClose = false;
-      jsonRPC!.done.then(
-        (value) {
-          _handleRelayClose(
-            socketHandler.closeCode,
-            socketHandler.closeReason,
-          );
-        },
-      );
-
-      onRelayClientConnect.broadcast();
-    } catch (e) {
-      onRelayClientError.broadcast(ErrorEvent(e));
+    if (jsonRPC != null) {
+      await jsonRPC!.close();
+      jsonRPC = null;
     }
-    _connecting = false;
+
+    core.logger.t('Initializing WebSocket with $url');
+    await socketHandler.setup(url: url);
+    await socketHandler.connect().timeout(Duration(seconds: 5));
+
+    jsonRPC = Peer(socketHandler.channel!);
+
+    jsonRPC!.registerMethod(
+      _buildMethod(JSON_RPC_SUBSCRIPTION),
+      _handleSubscription,
+    );
+    jsonRPC!.registerMethod(
+      _buildMethod(JSON_RPC_SUBSCRIBE),
+      _handleSubscribe,
+    );
+    jsonRPC!.registerMethod(
+      _buildMethod(JSON_RPC_UNSUBSCRIBE),
+      _handleUnsubscribe,
+    );
+
+    if (jsonRPC!.isClosed) {
+      throw const WalletConnectError(
+        code: 0,
+        message: 'WebSocket closed',
+      );
+    }
+
+    jsonRPC!.listen();
+
+    // When jsonRPC closes, emit the event
+    _handledClose = false;
+    jsonRPC!.done.then(
+      (value) {
+        _handleRelayClose(
+          socketHandler.closeCode,
+          socketHandler.closeReason,
+        );
+      },
+    );
+
+    onRelayClientConnect.broadcast();
+    core.logger.d('[$runtimeType] Connected to relay ${core.relayUrl}');
   }
 
   Future<void> _handleRelayClose(int? code, String? reason) async {
@@ -314,13 +311,9 @@ class RelayClient implements IRelayClient {
     }
 
     // If the code requires reconnect, do so
+    final reconnectCodes = [1001, 4008, 4010, 1002, 1005, 10002];
     if (code != null) {
-      if (code == 1001 ||
-          code == 4008 ||
-          code == 4010 ||
-          code == 1002 ||
-          code == 10002 ||
-          code == 1005) {
+      if (reconnectCodes.contains(code)) {
         await connect();
       } else {
         await disconnect();
@@ -328,9 +321,10 @@ class RelayClient implements IRelayClient {
             ? reason ?? WebSocketErrors.INVALID_PROJECT_ID_OR_JWT
             : '';
         onRelayClientError.broadcast(
-          ErrorEvent(
-            WalletConnectError(code: code, message: errorReason),
-          ),
+          ErrorEvent(WalletConnectError(
+            code: code,
+            message: errorReason,
+          )),
         );
       }
     }

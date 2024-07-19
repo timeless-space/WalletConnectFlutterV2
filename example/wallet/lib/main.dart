@@ -3,14 +3,20 @@ import 'package:get_it_mixin/get_it_mixin.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/bottom_sheet/bottom_sheet_listener.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/bottom_sheet/bottom_sheet_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/bottom_sheet/i_bottom_sheet_service.dart';
+import 'package:walletconnect_flutter_v2_wallet/dependencies/chains/cosmos_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/chains/evm_service.dart';
+import 'package:walletconnect_flutter_v2_wallet/dependencies/chains/kadena_service.dart';
+import 'package:walletconnect_flutter_v2_wallet/dependencies/chains/polkadot_service.dart';
+import 'package:walletconnect_flutter_v2_wallet/dependencies/chains/solana_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/deep_link_handler.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/i_web3wallet_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/key_service/i_key_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/key_service/key_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/web3wallet_service.dart';
+import 'package:walletconnect_flutter_v2_wallet/models/chain_data.dart';
 import 'package:walletconnect_flutter_v2_wallet/models/page_data.dart';
 import 'package:walletconnect_flutter_v2_wallet/pages/apps_page.dart';
+import 'package:walletconnect_flutter_v2_wallet/pages/settings_page.dart';
 import 'package:walletconnect_flutter_v2_wallet/utils/constants.dart';
 import 'package:flutter/material.dart';
 import 'package:walletconnect_flutter_v2_wallet/utils/string_constants.dart';
@@ -58,13 +64,46 @@ class _MyHomePageState extends State<MyHomePage> with GetItStateMixin {
     GetIt.I.registerSingleton<IKeyService>(KeyService());
 
     final IWeb3WalletService web3WalletService = Web3WalletService();
-    web3WalletService.create();
+    await web3WalletService.create();
     GetIt.I.registerSingleton<IWeb3WalletService>(web3WalletService);
 
-    for (final supportedChain in EVMChainsSupported.values) {
+    // Support EVM Chains
+    for (final chainData in ChainData.eip155Chains) {
       GetIt.I.registerSingleton<EVMService>(
-        EVMService(chainSupported: supportedChain),
-        instanceName: supportedChain.chain(),
+        EVMService(chainSupported: chainData),
+        instanceName: chainData.chainId,
+      );
+    }
+
+    // Support Kadena Chains
+    for (final chainData in ChainData.kadenaChains) {
+      GetIt.I.registerSingleton<KadenaService>(
+        KadenaService(chainSupported: chainData),
+        instanceName: chainData.chainId,
+      );
+    }
+
+    // Support Polkadot Chains
+    for (final chainData in ChainData.polkadotChains) {
+      GetIt.I.registerSingleton<PolkadotService>(
+        PolkadotService(chainSupported: chainData),
+        instanceName: chainData.chainId,
+      );
+    }
+
+    // Support Solana Chains
+    for (final chainData in ChainData.solanaChains) {
+      GetIt.I.registerSingleton<SolanaService>(
+        SolanaService(chainSupported: chainData),
+        instanceName: chainData.chainId,
+      );
+    }
+
+    // Support Cosmos Chains
+    for (final chainData in ChainData.cosmosChains) {
+      GetIt.I.registerSingleton<CosmosService>(
+        CosmosService(chainSupported: chainData),
+        instanceName: chainData.chainId,
       );
     }
 
@@ -77,23 +116,18 @@ class _MyHomePageState extends State<MyHomePage> with GetItStateMixin {
           title: StringConstants.connectPageTitle,
           icon: Icons.swap_vert_circle_outlined,
         ),
+        // PageData(
+        //   page: const Center(
+        //     child: Text(
+        //       'Inbox (Not Implemented)',
+        //       style: StyleConstants.bodyText,
+        //     ),
+        //   ),
+        //   title: 'Inbox',
+        //   icon: Icons.inbox_rounded,
+        // ),
         PageData(
-          page: const Center(
-            child: Text(
-              'Inbox (Not Implemented)',
-              style: StyleConstants.bodyText,
-            ),
-          ),
-          title: 'Inbox',
-          icon: Icons.inbox_rounded,
-        ),
-        PageData(
-          page: const Center(
-            child: Text(
-              'Settings (Not Implemented)',
-              style: StyleConstants.bodyText,
-            ),
-          ),
+          page: const SettingsPage(),
           title: 'Settings',
           icon: Icons.settings_outlined,
         ),

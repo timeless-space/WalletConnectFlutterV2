@@ -36,8 +36,9 @@ class SessionProposalCompleter {
 
 @freezed
 class Namespace with _$Namespace {
-  @JsonSerializable()
+  @JsonSerializable(includeIfNull: false)
   const factory Namespace({
+    List<String>? chains,
     required List<String> accounts,
     required List<String> methods,
     required List<String> events,

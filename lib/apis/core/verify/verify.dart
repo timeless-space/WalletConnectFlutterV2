@@ -13,7 +13,6 @@ class Verify implements IVerify {
 
   Verify({
     required ICore core,
-    required String projectId,
     required IHttpClient httpClient,
   })  : _core = core,
         _httpClient = httpClient;
@@ -27,42 +26,23 @@ class Verify implements IVerify {
 
   @override
   Future<AttestationResponse?> resolve({required String attestationId}) async {
-    AttestationResponse? response;
     try {
-      response = await _fetchAttestation(attestationId, _verifyUrl);
-    } on AttestationNotFound catch (e) {
-      _core.logger.i(e.message);
-      response = await _fetchAttestation(
-        attestationId,
-        WalletConnectConstants.VERIFY_FALLBACK_SERVER,
-      );
-    } on Exception catch (error) {
-      _core.logger.e(error);
-      response = await _fetchAttestation(
-        attestationId,
-        WalletConnectConstants.VERIFY_FALLBACK_SERVER,
-      );
+      final uri = Uri.parse('$_verifyUrl/attestation/$attestationId');
+      final response = await _httpClient.get(uri).timeout(Duration(seconds: 5));
+      if (response.statusCode == 404 || response.body.isEmpty) {
+        throw AttestationNotFound(
+          code: 404,
+          message: 'Attestion for this dapp could not be found',
+        );
+      }
+      if (response.statusCode != 200) {
+        throw Exception('Attestation response error: ${response.statusCode}');
+      }
+      return AttestationResponse.fromJson(jsonDecode(response.body));
+    } catch (e) {
+      _core.logger.d('[$runtimeType] resolve $e');
+      rethrow;
     }
-    return response;
-  }
-
-  Future<AttestationResponse> _fetchAttestation(
-    String attestationId,
-    String url,
-  ) async {
-    final uri = Uri.parse('$url/attestation/$attestationId');
-    final response = await _httpClient.get(uri);
-    if (response.statusCode == 404) {
-      throw AttestationNotFound(
-        code: 404,
-        message: 'Attestion for this dapp could not be found',
-      );
-    }
-    if (response.statusCode != 200) {
-      final error = 'Attestation response error: ${response.statusCode}';
-      throw Exception(error);
-    }
-    return AttestationResponse.fromJson(jsonDecode(response.body));
   }
 
   String _setVerifyUrl({String? verifyUrl}) {

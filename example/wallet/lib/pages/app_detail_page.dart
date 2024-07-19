@@ -5,7 +5,6 @@ import 'package:walletconnect_flutter_v2_wallet/dependencies/deep_link_handler.d
 import 'package:walletconnect_flutter_v2_wallet/dependencies/i_web3wallet_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/utils/constants.dart';
 import 'package:walletconnect_flutter_v2_wallet/utils/namespace_model_builder.dart';
-import 'package:walletconnect_flutter_v2_wallet/utils/string_constants.dart';
 import 'package:walletconnect_flutter_v2_wallet/widgets/custom_button.dart';
 
 class AppDetailPage extends StatefulWidget {
@@ -21,8 +20,32 @@ class AppDetailPage extends StatefulWidget {
 }
 
 class AppDetailPageState extends State<AppDetailPage> {
+  late Web3Wallet _web3Wallet;
+
+  @override
+  void initState() {
+    super.initState();
+    _web3Wallet = GetIt.I<IWeb3WalletService>().web3wallet;
+    _web3Wallet.onSessionDelete.subscribe(_onSessionDelete);
+    _web3Wallet.onSessionExpire.subscribe(_onSessionDelete);
+  }
+
+  @override
+  void dispose() {
+    _web3Wallet.onSessionDelete.unsubscribe(_onSessionDelete);
+    _web3Wallet.onSessionExpire.unsubscribe(_onSessionDelete);
+    super.dispose();
+  }
+
+  void _onSessionDelete(dynamic args) {
+    setState(() {
+      _web3Wallet = GetIt.I<IWeb3WalletService>().web3wallet;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final metadata = widget.pairing.peerMetadata;
     DateTime dateTime =
         DateTime.fromMillisecondsSinceEpoch(widget.pairing.expiry * 1000);
     int year = dateTime.year;
@@ -32,20 +55,17 @@ class AppDetailPageState extends State<AppDetailPage> {
     String expiryDate =
         '$year-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
 
-    List<SessionData> sessions = GetIt.I
-        .get<IWeb3WalletService>()
-        .getWeb3Wallet()
-        .sessions
+    final sessions = _web3Wallet.sessions
         .getAll()
         .where((element) => element.pairingTopic == widget.pairing.topic)
         .toList();
 
     List<Widget> sessionWidgets = [];
     for (final SessionData session in sessions) {
-      List<Widget> namespaceWidget =
-          ConnectionWidgetBuilder.buildFromNamespaces(
+      final namespaceWidget = ConnectionWidgetBuilder.buildFromNamespaces(
         session.topic,
         session.namespaces,
+        context,
       );
       // Loop through and add the namespace widgets, but put 20 pixels between each one
       for (int i = 0; i < namespaceWidget.length; i++) {
@@ -54,11 +74,41 @@ class AppDetailPageState extends State<AppDetailPage> {
           sessionWidgets.add(const SizedBox(height: 20.0));
         }
       }
+      sessionWidgets.add(const SizedBox.square(dimension: 10.0));
+      sessionWidgets.add(
+        Row(
+          children: [
+            CustomButton(
+              type: CustomButtonType.normal,
+              onTap: () async {
+                try {
+                  await _web3Wallet.disconnectSession(
+                    topic: session.topic,
+                    reason: Errors.getSdkError(Errors.USER_DISCONNECTED),
+                  );
+                  setState(() {});
+                } catch (e) {
+                  debugPrint('[WALLET] ${e.toString()}');
+                }
+              },
+              child: const Center(
+                child: Text(
+                  'Disconnect Session',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
-    final scheme = widget.pairing.peerMetadata?.redirect?.native ?? '';
+    final scheme = metadata?.redirect?.native ?? '';
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.pairing.peerMetadata?.name ?? 'Unknown'),
+        title: Text(metadata?.name ?? 'Unknown'),
         actions: [
           Visibility(
             visible: scheme.isNotEmpty,
@@ -82,33 +132,39 @@ class AppDetailPageState extends State<AppDetailPage> {
         ),
         child: Column(
           children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 40.0,
-                  backgroundImage: (widget
-                              .pairing.peerMetadata!.icons.isNotEmpty
-                          ? NetworkImage(widget.pairing.peerMetadata!.icons[0])
-                          : const AssetImage('assets/images/default_icon.png'))
-                      as ImageProvider<Object>,
-                ),
-                const SizedBox(width: 10.0),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(widget.pairing.peerMetadata!.url),
-                      Text('Expires on: $expiryDate'),
-                    ],
+            Visibility(
+              visible: metadata != null,
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 40.0,
+                    backgroundImage: ((metadata?.icons ?? []).isNotEmpty
+                            ? NetworkImage(metadata!.icons[0])
+                            : const AssetImage(
+                                'assets/images/default_icon.png'))
+                        as ImageProvider<Object>,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 10.0),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(metadata?.url ?? ''),
+                        Text('Expires on: $expiryDate'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 20.0),
-            Column(
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: sessionWidgets,
+            Visibility(
+              visible: metadata != null,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: sessionWidgets,
+              ),
             ),
             const SizedBox(height: 20.0),
             Row(
@@ -117,19 +173,26 @@ class AppDetailPageState extends State<AppDetailPage> {
                   type: CustomButtonType.invalid,
                   onTap: () async {
                     try {
-                      await GetIt.I<IWeb3WalletService>()
-                          .getWeb3Wallet()
-                          .core
-                          .pairing
-                          .disconnect(topic: widget.pairing.topic);
+                      await _web3Wallet.core.pairing.disconnect(
+                        topic: widget.pairing.topic,
+                      );
+                      final topicSession = sessions.where(
+                        (s) => s.pairingTopic == widget.pairing.topic,
+                      );
+                      for (var session in topicSession) {
+                        await _web3Wallet.disconnectSession(
+                          topic: session.topic,
+                          reason: Errors.getSdkError(Errors.USER_DISCONNECTED),
+                        );
+                      }
                       _back();
                     } catch (e) {
-                      //debugPrint(e.toString());
+                      debugPrint('[WALLET] ${e.toString()}');
                     }
                   },
                   child: const Center(
                     child: Text(
-                      StringConstants.delete,
+                      'Delete Pairing',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,

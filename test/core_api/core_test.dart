@@ -11,7 +11,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   PackageInfo.setMockInitialValues(
     appName: 'walletconnect_flutter_v2',
-    packageName: 'sdk.test',
+    packageName: 'com.walletconnect.flutterdapp',
     version: '1.0',
     buildNumber: '2',
     buildSignature: 'buildSignature',
@@ -42,7 +42,7 @@ void main() {
       });
 
       await core.start();
-      expect(errorCount, 2);
+      expect(errorCount, 1);
       expect(core.relayUrl, WalletConnectConstants.DEFAULT_RELAY_URL);
 
       verifyInOrder([
@@ -50,15 +50,6 @@ void main() {
           url: argThat(
             contains(
               WalletConnectConstants.DEFAULT_RELAY_URL,
-            ),
-            named: 'url',
-          ),
-        ),
-        mockWebSocketHandler.connect(),
-        mockWebSocketHandler.setup(
-          url: argThat(
-            contains(
-              WalletConnectConstants.FALLBACK_RELAY_URL,
             ),
             named: 'url',
           ),

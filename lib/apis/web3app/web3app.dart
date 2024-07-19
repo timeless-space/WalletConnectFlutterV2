@@ -85,11 +85,6 @@ class Web3App implements IWeb3App {
           return SessionRequest.fromJson(value);
         },
       ),
-    );
-
-    authEngine = AuthEngine(
-      core: core,
-      metadata: metadata,
       authKeys: GenericStore(
         storage: core.storage,
         context: StoreVersions.CONTEXT_AUTH_KEYS,
@@ -122,6 +117,23 @@ class Web3App implements IWeb3App {
           return StoredCacao.fromJson(value);
         },
       ),
+      sessionAuthRequests: GenericStore(
+        storage: core.storage,
+        context: StoreVersions.CONTEXT_AUTH_REQUESTS,
+        version: StoreVersions.VERSION_AUTH_REQUESTS,
+        fromJson: (dynamic value) {
+          return PendingSessionAuthRequest.fromJson(value);
+        },
+      ),
+    );
+
+    authEngine = AuthEngine(
+      core: core,
+      metadata: metadata,
+      authKeys: signEngine.authKeys,
+      pairingTopics: signEngine.pairingTopics,
+      authRequests: signEngine.authRequests,
+      completeRequests: signEngine.completeRequests,
     );
   }
 
@@ -194,7 +206,7 @@ class Web3App implements IWeb3App {
   }
 
   @override
-  Future request({
+  Future<dynamic> request({
     required String topic,
     required String chainId,
     required SessionRequestParams request,
@@ -204,6 +216,54 @@ class Web3App implements IWeb3App {
         topic: topic,
         chainId: chainId,
         request: request,
+      );
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<dynamic>> requestReadContract({
+    required DeployedContract deployedContract,
+    required String functionName,
+    required String rpcUrl,
+    EthereumAddress? sender,
+    List parameters = const [],
+  }) async {
+    try {
+      return await signEngine.requestReadContract(
+        sender: sender,
+        deployedContract: deployedContract,
+        functionName: functionName,
+        rpcUrl: rpcUrl,
+        parameters: parameters,
+      );
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<dynamic> requestWriteContract({
+    required String topic,
+    required String chainId,
+    required String rpcUrl,
+    required DeployedContract deployedContract,
+    required String functionName,
+    required Transaction transaction,
+    String? method,
+    List parameters = const [],
+  }) async {
+    try {
+      return await signEngine.requestWriteContract(
+        topic: topic,
+        chainId: chainId,
+        rpcUrl: rpcUrl,
+        deployedContract: deployedContract,
+        functionName: functionName,
+        transaction: transaction,
+        method: method,
+        parameters: parameters,
       );
     } catch (e) {
       rethrow;
@@ -287,7 +347,8 @@ class Web3App implements IWeb3App {
   @override
   IPairingStore get pairings => core.pairing.getStore();
 
-  ///---------- AUTH ENGINE ----------///
+  ///---------- (DEPRECATED) AUTH ENGINE ----------///
+
   @override
   Event<AuthResponse> get onAuthResponse => authEngine.onAuthResponse;
 
@@ -299,6 +360,10 @@ class Web3App implements IWeb3App {
   IGenericStore<StoredCacao> get completeRequests =>
       authEngine.completeRequests;
 
+  @Deprecated(
+    'AuthEngine/AuthClient is deprecated and will be removed soon.\n'
+    'Please use authentication methods from SignEngine/SignClient instead',
+  )
   @override
   late IAuthEngine authEngine;
 
@@ -332,13 +397,53 @@ class Web3App implements IWeb3App {
     }
   }
 
+  ///---------- ONE-CLICK AUTH SIGN ENGINE ----------///
+
+  @override
+  Event<SessionAuthResponse> get onSessionAuthResponse =>
+      signEngine.onSessionAuthResponse;
+
+  @override
+  Future<SessionAuthRequestResponse> authenticate({
+    required SessionAuthRequestParams params,
+    String? pairingTopic,
+    List<List<String>>? methods = const [
+      [MethodConstants.WC_SESSION_AUTHENTICATE]
+    ],
+  }) async {
+    try {
+      return signEngine.authenticate(
+        params: params,
+        pairingTopic: pairingTopic,
+        methods: methods,
+      );
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<bool> validateSignedCacao({
+    required Cacao cacao,
+    required String projectId,
+  }) {
+    try {
+      return signEngine.validateSignedCacao(
+        cacao: cacao,
+        projectId: projectId,
+      );
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   @override
   String formatAuthMessage({
     required String iss,
     required CacaoRequestPayload cacaoPayload,
   }) {
     try {
-      return authEngine.formatAuthMessage(
+      return signEngine.formatAuthMessage(
         iss: iss,
         cacaoPayload: cacaoPayload,
       );

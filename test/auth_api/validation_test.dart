@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:walletconnect_flutter_v2/apis/auth_api/utils/auth_constants.dart';
+import 'package:walletconnect_flutter_v2/apis/sign_api/utils/auth/auth_constants.dart';
 import 'package:walletconnect_flutter_v2/walletconnect_flutter_v2.dart';
 
 import 'utils/engine_constants.dart';
@@ -47,17 +47,6 @@ void main() {
             (e) => e.message,
             'message',
             'Missing or invalid. requestAuth() invalid aud: ${testAuthRequestParamsInvalidAud.aud}. Must be a valid url.',
-          ),
-        ),
-      );
-      expect(
-        () => AuthApiValidators.isValidRequest(
-            testAuthRequestParamsInvalidDomain),
-        throwsA(
-          isA<WalletConnectError>().having(
-            (e) => e.message,
-            'message',
-            'Missing or invalid. requestAuth() invalid domain: ${testAuthRequestParamsInvalidDomain.domain}. aud must contain domain.',
           ),
         ),
       );

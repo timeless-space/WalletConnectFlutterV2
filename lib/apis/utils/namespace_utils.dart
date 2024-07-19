@@ -1,5 +1,6 @@
 import 'package:walletconnect_flutter_v2/apis/sign_api/models/proposal_models.dart';
 import 'package:walletconnect_flutter_v2/apis/sign_api/models/session_models.dart';
+import 'package:walletconnect_flutter_v2/apis/utils/constants.dart';
 
 class NamespaceUtils {
   /// Checks if the string is a chain
@@ -75,18 +76,34 @@ class NamespaceUtils {
 
   /// Gets all unique namespaces from the provided list of accounts
   /// This function assumes that all accounts are valid
-  // static List<String> getNamespacesFromAccounts(List<String> accounts) {
-  //   Set<String> namespaces = {};
-  //   accounts.forEach((account) {
-  //     chains.add(
-  //       getChainFromAccount(
-  //         account,
-  //       ),
-  //     );
-  //   });
+  static Map<String, Namespace> getNamespacesFromAccounts(
+    List<String> accounts,
+  ) {
+    Map<String, Namespace> namespaces = {};
+    for (var account in accounts) {
+      final ns = account.split(':')[0];
+      final cid = account.split(':')[1];
+      if (namespaces[ns] == null) {
+        namespaces[ns] = Namespace(
+          accounts: [],
+          methods: [],
+          events: [],
+        );
+      }
+      namespaces[ns] = namespaces[ns]!.copyWith(
+        accounts: [
+          ...namespaces[ns]!.accounts,
+          account,
+        ],
+        chains: [
+          ...(namespaces[ns]?.chains ?? []),
+          '$ns:$cid',
+        ],
+      );
+    }
 
-  //   return chains.toList();
-  // }
+    return namespaces;
+  }
 
   /// Gets the chains from the namespace.
   /// If the namespace is a chain, then it returns the chain.
@@ -226,23 +243,21 @@ class NamespaceUtils {
     required Map<String, RequiredNamespace> requiredNamespaces,
     Map<String, RequiredNamespace>? optionalNamespaces,
   }) {
-    final Map<String, Namespace> namespaces = _constructNamespacesFromRequired(
+    final Map<String, Namespace> namespaces = _constructNamespaces(
       availableAccounts: availableAccounts,
       availableMethods: availableMethods,
       availableEvents: availableEvents,
-      requiredNamespaces: requiredNamespaces,
+      namespacesMap: requiredNamespaces,
     );
-    final Map<String, Namespace> optional = optionalNamespaces == null
-        ? {}
-        : _constructNamespacesFromRequired(
-            availableAccounts: availableAccounts,
-            availableMethods: availableMethods,
-            availableEvents: availableEvents,
-            requiredNamespaces: optionalNamespaces,
-          );
+    final Map<String, Namespace> optionals = _constructNamespaces(
+      availableAccounts: availableAccounts,
+      availableMethods: availableMethods,
+      availableEvents: availableEvents,
+      namespacesMap: optionalNamespaces ?? {},
+    );
 
     // Loop through the optional keys and if they exist in the namespaces, then merge them and delete them from optional
-    List<String> keys = optional.keys.toList();
+    List<String> keys = optionals.keys.toList();
     for (int i = 0; i < keys.length; i++) {
       String key = keys[i];
       if (namespaces.containsKey(key)) {
@@ -250,27 +265,50 @@ class NamespaceUtils {
           accounts: namespaces[key]!
               .accounts
               .toSet()
-              .union(optional[key]!.accounts.toSet())
+              .union(optionals[key]!.accounts.toSet())
               .toList(),
           methods: namespaces[key]!
               .methods
               .toSet()
-              .union(optional[key]!.methods.toSet())
+              .union(optionals[key]!.methods.toSet())
               .toList(),
           events: namespaces[key]!
               .events
               .toSet()
-              .union(optional[key]!.events.toSet())
+              .union(optionals[key]!.events.toSet())
               .toList(),
         );
-        optional.remove(key);
+        optionals.remove(key);
       }
     }
 
     return {
       ...namespaces,
-      ...optional,
+      ...optionals,
     };
+  }
+
+  static Map<String, Namespace> buildNamespacesFromAuth({
+    required Set<String> methods,
+    required Set<String> accounts,
+  }) {
+    final parsedAccounts = accounts.map(
+      (account) => account.replaceAll('did:pkh:', ''),
+    );
+
+    final namespaces = getNamespacesFromAccounts(parsedAccounts.toList());
+
+    final entries = namespaces.entries.map((e) {
+      return MapEntry(
+        e.key,
+        Namespace.fromJson(e.value.toJson()).copyWith(
+          methods: methods.toList(),
+          events: EventsConstants.allEvents,
+        ),
+      );
+    });
+
+    return Map<String, Namespace>.fromEntries(entries);
   }
 
   /// Gets the matching items from the available items using the chainId
@@ -297,21 +335,21 @@ class NamespaceUtils {
     return matching;
   }
 
-  static Map<String, Namespace> _constructNamespacesFromRequired({
+  static Map<String, Namespace> _constructNamespaces({
     required Set<String> availableAccounts,
     required Set<String> availableMethods,
     required Set<String> availableEvents,
-    required Map<String, RequiredNamespace> requiredNamespaces,
+    required Map<String, RequiredNamespace> namespacesMap,
   }) {
     Map<String, Namespace> namespaces = {};
 
     // Loop through the required namespaces
-    for (final String namespaceOrChainId in requiredNamespaces.keys) {
+    for (final String namespaceOrChainId in namespacesMap.keys) {
       // If the key is a chain, add all of the chain specific events, keys, and methods first
       final List<String> accounts = [];
       final List<String> events = [];
       final List<String> methods = [];
-      final namespace = requiredNamespaces[namespaceOrChainId]!;
+      final namespace = namespacesMap[namespaceOrChainId]!;
       final chains = namespace.chains ?? [];
       if (NamespaceUtils.isValidChainId(namespaceOrChainId) || chains.isEmpty) {
         // Add the chain specific availableAccounts
@@ -376,5 +414,30 @@ class NamespaceUtils {
     }
 
     return namespaces;
+  }
+
+  /// To be used by Wallet to regenerate already generatedNamespaces but adding `chains` parameter
+  ///
+  /// Example usage on onSessionProposal(SessionProposalEvent? event)
+  ///
+  /// await _web3Wallet!.approveSession(
+  ///   id: event.id,
+  ///   namespaces: NamespaceUtils.regenerateNamespacesWithChains(
+  ///     event.params.generatedNamespaces!,
+  ///   ),
+  ///   sessionProperties: event.params.sessionProperties,
+  /// );
+
+  static Map<String, Namespace> regenerateNamespacesWithChains(
+    Map<String, Namespace> generatedNamespaces,
+  ) {
+    Map<String, Namespace> regeneratedNamespaces = {};
+    for (var key in generatedNamespaces.keys) {
+      final namespace = generatedNamespaces[key]!.copyWith(
+        chains: getChainsFromAccounts(generatedNamespaces[key]!.accounts),
+      );
+      regeneratedNamespaces[key] = namespace;
+    }
+    return regeneratedNamespaces;
   }
 }

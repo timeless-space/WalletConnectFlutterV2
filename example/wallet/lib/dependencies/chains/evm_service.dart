@@ -1,309 +1,543 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 // ignore: depend_on_referenced_packages
 import 'package:http/http.dart' as http;
-import 'package:convert/convert.dart';
 import 'package:eth_sig_util/eth_sig_util.dart';
 import 'package:get_it/get_it.dart';
 import 'package:walletconnect_flutter_v2/walletconnect_flutter_v2.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/bottom_sheet/i_bottom_sheet_service.dart';
-import 'package:walletconnect_flutter_v2_wallet/dependencies/deep_link_handler.dart';
+import 'package:walletconnect_flutter_v2_wallet/dependencies/chains/common.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/i_web3wallet_service.dart';
 import 'package:walletconnect_flutter_v2_wallet/dependencies/key_service/i_key_service.dart';
-import 'package:walletconnect_flutter_v2_wallet/models/eth/ethereum_transaction.dart';
+import 'package:walletconnect_flutter_v2_wallet/models/chain_metadata.dart';
+import 'package:walletconnect_flutter_v2_wallet/utils/constants.dart';
 import 'package:walletconnect_flutter_v2_wallet/utils/eth_utils.dart';
 import 'package:walletconnect_flutter_v2_wallet/widgets/wc_connection_widget/wc_connection_model.dart';
 import 'package:walletconnect_flutter_v2_wallet/widgets/wc_connection_widget/wc_connection_widget.dart';
 import 'package:walletconnect_flutter_v2_wallet/widgets/wc_request_widget.dart/wc_request_widget.dart';
 
-enum EVMChainsSupported {
-  ethereum,
-  polygon,
-  arbitrum,
-  goerli,
-  bsc,
-  mumbai;
+enum SupportedEVMMethods {
+  ethSign,
+  ethSignTransaction,
+  ethSignTypedData,
+  ethSignTypedDataV4,
+  switchChain,
+  personalSign,
+  ethSendTransaction;
 
-  String chain() {
-    String id = '';
-
+  String get name {
     switch (this) {
-      case EVMChainsSupported.ethereum:
-        id = '1';
-        break;
-      case EVMChainsSupported.polygon:
-        id = '137';
-        break;
-      case EVMChainsSupported.arbitrum:
-        id = '42161';
-        break;
-      case EVMChainsSupported.goerli:
-        id = '5';
-        break;
-      case EVMChainsSupported.bsc:
-        id = '56';
-        break;
-      case EVMChainsSupported.mumbai:
-        id = '80001';
-        break;
+      case ethSign:
+        return 'eth_sign';
+      case ethSignTransaction:
+        return 'eth_signTransaction';
+      case ethSignTypedData:
+        return 'eth_signTypedData';
+      case ethSignTypedDataV4:
+        return 'eth_signTypedData_v4';
+      case switchChain:
+        return 'wallet_switchEthereumChain';
+      case personalSign:
+        return 'personal_sign';
+      case ethSendTransaction:
+        return 'eth_sendTransaction';
     }
-
-    return 'eip155:$id';
   }
 }
 
 class EVMService {
   final _bottomSheetService = GetIt.I<IBottomSheetService>();
-  final _web3WalletService = GetIt.I<IWeb3WalletService>();
-  final _web3Wallet = GetIt.I<IWeb3WalletService>().getWeb3Wallet();
+  final _web3Wallet = GetIt.I<IWeb3WalletService>().web3wallet;
 
-  final EVMChainsSupported chainSupported;
-  final Web3Client ethClient;
+  final ChainMetadata chainSupported;
+  late final Web3Client ethClient;
 
-  EVMService({required this.chainSupported, Web3Client? ethClient})
-      : ethClient = ethClient ??
-            Web3Client(
-                'https://mainnet.infura.io/v3/51716d2096df4e73bec298680a51f0c5',
-                http.Client()) {
-    // Supported events
-    const supportedEvents = EventsConstants.requiredEvents;
-    for (final String event in supportedEvents) {
-      debugPrint('Supported event ${chainSupported.chain()} $event');
+  Map<String, dynamic Function(String, dynamic)> get sessionRequestHandlers => {
+        SupportedEVMMethods.ethSign.name: ethSign,
+        SupportedEVMMethods.ethSignTransaction.name: ethSignTransaction,
+        SupportedEVMMethods.ethSignTypedData.name: ethSignTypedData,
+        SupportedEVMMethods.ethSignTypedDataV4.name: ethSignTypedDataV4,
+        SupportedEVMMethods.switchChain.name: switchChain,
+        // 'wallet_addEthereumChain': addChain,
+      };
+
+  Map<String, dynamic Function(String, dynamic)> get methodRequestHandlers => {
+        SupportedEVMMethods.personalSign.name: personalSign,
+        SupportedEVMMethods.ethSendTransaction.name: ethSendTransaction,
+      };
+
+  EVMService({required this.chainSupported}) {
+    ethClient = Web3Client(chainSupported.rpc.first, http.Client());
+
+    for (final event in EventsConstants.allEvents) {
       _web3Wallet.registerEventEmitter(
-        chainId: chainSupported.chain(),
+        chainId: chainSupported.chainId,
         event: event,
       );
     }
-    // Supported methods
-    Map<String, dynamic Function(String, dynamic)> methodsHandlers = {
-      'personal_sign': personalSign,
-      'eth_sign': ethSign,
-      'eth_signTransaction': ethSignTransaction,
-      'eth_signTypedData': ethSignTypedData,
-      'eth_sendTransaction': ethSignTransaction,
-      'eth_signTypedData_v4': ethSignTypedData,
-      'wallet_switchEthereumChain': switchChain,
-      'wallet_addEthereumChain': addChain,
-      // add whatever method/handler you want to support
-    };
 
-    for (var handler in methodsHandlers.entries) {
+    for (var handler in methodRequestHandlers.entries) {
       _web3Wallet.registerRequestHandler(
-        chainId: chainSupported.chain(),
+        chainId: chainSupported.chainId,
         method: handler.key,
         handler: handler.value,
       );
     }
+    for (var handler in sessionRequestHandlers.entries) {
+      _web3Wallet.registerRequestHandler(
+        chainId: chainSupported.chainId,
+        method: handler.key,
+        handler: handler.value,
+      );
+    }
+
+    _web3Wallet.onSessionRequest.subscribe(_onSessionRequest);
   }
 
-  Future<String?> personalSign(String topic, dynamic parameters) async {
-    debugPrint('[$runtimeType] personalSign request: $parameters');
-    String? result;
+  // personal_sign is handled using onSessionRequest event for demo purposes
+  Future<void> personalSign(String topic, dynamic parameters) async {
+    debugPrint('[WALLET] personalSign request: $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
     final data = EthUtils.getDataFromParamsList(parameters);
     final message = EthUtils.getUtf8Message(data.toString());
+    var response = JsonRpcResponse(
+      id: pRequest.id,
+      jsonrpc: '2.0',
+    );
 
-    result = await requestApproval(message);
-    if (result == null) {
+    if (await CommonMethods.requestApproval(message)) {
       try {
         // Load the private key
         final keys = GetIt.I<IKeyService>().getKeysForChain(
-          chainSupported.chain(),
-        );
-        final credentials = EthPrivateKey.fromHex(keys[0].privateKey);
-
-        final String signature = hex.encode(
-          credentials.signPersonalMessageToUint8List(
-            Uint8List.fromList(utf8.encode(message)),
-          ),
+          chainSupported.chainId,
         );
 
-        result = '0x$signature';
+        final pk = '0x${keys[0].privateKey}';
+        final credentials = EthPrivateKey.fromHex(pk);
+        final signature = credentials.signPersonalMessageToUint8List(
+          utf8.encode(message),
+        );
+        final signedTx = bytesToHex(signature, include0x: true);
+
+        isValidSignature(signedTx, message, credentials.address.hex);
+
+        response = response.copyWith(result: signedTx);
       } catch (e) {
-        debugPrint('[$runtimeType] personalSign error $e');
-        result = e.toString();
+        debugPrint('[WALLET] personalSign error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: 0, message: e.toString()),
+        );
       }
+    } else {
+      response = response.copyWith(
+        error: const JsonRpcError(code: 5001, message: 'User rejected method'),
+      );
     }
 
-    final session = _web3Wallet.sessions.get(topic);
-    final scheme = session?.peer.metadata.redirect?.native ?? '';
-    DeepLinkHandler.goTo(scheme, delay: 300, modalTitle: 'Success');
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
 
-    return result;
+    CommonMethods.goBackToDapp(topic, response.result ?? response.error);
   }
 
-  Future<String?> ethSign(String topic, dynamic parameters) async {
-    debugPrint('[$runtimeType] ethSign request: $parameters');
-    String? result;
+  Future<void> ethSign(String topic, dynamic parameters) async {
+    debugPrint('[WALLET] ethSign request: $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
     final data = EthUtils.getDataFromParamsList(parameters);
     final message = EthUtils.getUtf8Message(data.toString());
+    var response = JsonRpcResponse(
+      id: pRequest.id,
+      jsonrpc: '2.0',
+    );
 
-    result = await requestApproval(message);
-    if (result == null) {
+    if (await CommonMethods.requestApproval(message)) {
       try {
         // Load the private key
         final keys = GetIt.I<IKeyService>().getKeysForChain(
-          chainSupported.chain(),
-        );
-        final credentials = EthPrivateKey.fromHex(keys[0].privateKey);
-
-        final signature = hex.encode(
-          credentials.signPersonalMessageToUint8List(
-            Uint8List.fromList(utf8.encode(message)),
-          ),
+          chainSupported.chainId,
         );
 
-        result = '0x$signature';
+        final pk = '0x${keys[0].privateKey}';
+        final credentials = EthPrivateKey.fromHex(pk);
+        final signature = credentials.signPersonalMessageToUint8List(
+          utf8.encode(message),
+        );
+        final signedTx = bytesToHex(signature, include0x: true);
+
+        isValidSignature(signedTx, message, credentials.address.hex);
+
+        response = response.copyWith(result: signedTx);
       } catch (e) {
-        debugPrint('[$runtimeType] ethSign error $e');
-        result = e.toString();
+        debugPrint('[WALLET] ethSign error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: 0, message: e.toString()),
+        );
       }
+    } else {
+      response = response.copyWith(
+        error: const JsonRpcError(code: 5001, message: 'User rejected method'),
+      );
     }
 
-    final session = _web3Wallet.sessions.get(topic);
-    final scheme = session?.peer.metadata.redirect?.native ?? '';
-    DeepLinkHandler.goTo(scheme, delay: 300, modalTitle: 'Success');
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
 
-    return result;
+    CommonMethods.goBackToDapp(topic, response.result ?? response.error);
   }
 
-  Future<String?> ethSignTransaction(String topic, dynamic parameters) async {
-    debugPrint('[$runtimeType] ethSignTransaction request: $parameters');
-    String? result;
+  Future<void> ethSignTypedData(String topic, dynamic parameters) async {
+    debugPrint('[WALLET] ethSignTypedData request: $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
+    final data = EthUtils.getDataFromParamsList(parameters);
+    var response = JsonRpcResponse(
+      id: pRequest.id,
+      jsonrpc: '2.0',
+    );
 
-    result = await requestApproval(jsonEncode(parameters[0]));
-    if (result == null) {
-      // Load the private key
-      final keys = GetIt.I<IKeyService>().getKeysForChain(
-        chainSupported.chain(),
-      );
-      final credentials = EthPrivateKey.fromHex('0x${keys[0].privateKey}');
-
-      final ethTransaction = EthereumTransaction.fromJson(parameters[0]);
-
-      // Construct a transaction from the EthereumTransaction object
-      final transaction = Transaction(
-        from: EthereumAddress.fromHex(ethTransaction.from),
-        to: EthereumAddress.fromHex(ethTransaction.to),
-        value: EtherAmount.fromBigInt(
-          EtherUnit.wei,
-          BigInt.tryParse(ethTransaction.value) ?? BigInt.zero,
-        ),
-        gasPrice: ethTransaction.gasPrice != null
-            ? EtherAmount.fromBigInt(
-                EtherUnit.wei,
-                BigInt.tryParse(ethTransaction.gasPrice!) ?? BigInt.zero,
-              )
-            : null,
-        maxFeePerGas: ethTransaction.maxFeePerGas != null
-            ? EtherAmount.fromBigInt(
-                EtherUnit.wei,
-                BigInt.tryParse(ethTransaction.maxFeePerGas!) ?? BigInt.zero,
-              )
-            : null,
-        maxPriorityFeePerGas: ethTransaction.maxPriorityFeePerGas != null
-            ? EtherAmount.fromBigInt(
-                EtherUnit.wei,
-                BigInt.tryParse(ethTransaction.maxPriorityFeePerGas!) ??
-                    BigInt.zero,
-              )
-            : null,
-        maxGas: int.tryParse(ethTransaction.gasLimit ?? ''),
-        nonce: int.tryParse(ethTransaction.nonce ?? ''),
-        data: (ethTransaction.data != null && ethTransaction.data != '0x')
-            ? Uint8List.fromList(hex.decode(ethTransaction.data!))
-            : null,
-      );
-
-      try {
-        final signature = await ethClient.signTransaction(
-          credentials,
-          transaction,
-        );
-
-        // Sign the transaction
-        final signedTx = hex.encode(signature);
-
-        // Return the signed transaction as a hexadecimal string
-        result = '0x$signedTx';
-      } catch (e) {
-        debugPrint('[$runtimeType] ethSignTransaction error $e');
-        result = e.toString();
-      }
-    }
-
-    final session = _web3Wallet.sessions.get(topic);
-    final scheme = session?.peer.metadata.redirect?.native ?? '';
-    DeepLinkHandler.goTo(scheme, delay: 300, modalTitle: 'Success');
-
-    return result;
-  }
-
-  Future<String?> ethSignTypedData(String topic, dynamic parameters) async {
-    debugPrint('[$runtimeType] ethSignTypedData request: $parameters');
-    String? result;
-    final data = parameters[1] as String;
-
-    result = await requestApproval(data);
-    if (result == null) {
+    if (await CommonMethods.requestApproval(data)) {
       try {
         final keys = GetIt.I<IKeyService>().getKeysForChain(
-          chainSupported.chain(),
+          chainSupported.chainId,
         );
 
-        result = EthSigUtil.signTypedData(
+        final signature = EthSigUtil.signTypedData(
           privateKey: keys[0].privateKey,
           jsonData: data,
           version: TypedDataVersion.V4,
         );
+
+        response = response.copyWith(result: signature);
       } catch (e) {
-        debugPrint('[$runtimeType] ethSignTypedData error $e');
-        result = e.toString();
+        debugPrint('[WALLET] ethSignTypedData error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: 0, message: e.toString()),
+        );
       }
+    } else {
+      response = response.copyWith(
+        error: const JsonRpcError(code: 5001, message: 'User rejected method'),
+      );
     }
 
-    final session = _web3Wallet.sessions.get(topic);
-    final scheme = session?.peer.metadata.redirect?.native ?? '';
-    DeepLinkHandler.goTo(scheme, delay: 300, modalTitle: 'Success');
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
 
-    return result;
+    CommonMethods.goBackToDapp(topic, response.result ?? response.error);
+  }
+
+  Future<void> ethSignTypedDataV4(String topic, dynamic parameters) async {
+    debugPrint('[WALLET] ethSignTypedDataV4 request: $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
+    final data = EthUtils.getDataFromParamsList(parameters);
+    var response = JsonRpcResponse(
+      id: pRequest.id,
+      jsonrpc: '2.0',
+    );
+
+    if (await CommonMethods.requestApproval(data)) {
+      try {
+        final keys = GetIt.I<IKeyService>().getKeysForChain(
+          chainSupported.chainId,
+        );
+
+        final signature = EthSigUtil.signTypedData(
+          privateKey: keys[0].privateKey,
+          jsonData: data,
+          version: TypedDataVersion.V4,
+        );
+
+        response = response.copyWith(result: signature);
+      } catch (e) {
+        debugPrint('[WALLET] ethSignTypedDataV4 error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: 0, message: e.toString()),
+        );
+      }
+    } else {
+      response = response.copyWith(
+        error: const JsonRpcError(code: 5001, message: 'User rejected method'),
+      );
+    }
+
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
+
+    CommonMethods.goBackToDapp(topic, response.result ?? response.error);
+  }
+
+  Future<void> ethSignTransaction(String topic, dynamic parameters) async {
+    debugPrint('[WALLET] ethSignTransaction request: $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
+    final data = EthUtils.getTransactionFromParams(parameters);
+    if (data == null) return;
+    var response = JsonRpcResponse(
+      id: pRequest.id,
+      jsonrpc: '2.0',
+    );
+
+    final transaction = await _approveTransaction(data);
+    if (transaction is Transaction) {
+      try {
+        // Load the private key
+        final keys = GetIt.I<IKeyService>().getKeysForChain(
+          chainSupported.chainId,
+        );
+
+        final pk = '0x${keys[0].privateKey}';
+        final credentials = EthPrivateKey.fromHex(pk);
+        final chainId = chainSupported.chainId.split(':').last;
+
+        final signature = await ethClient.signTransaction(
+          credentials,
+          transaction,
+          chainId: int.parse(chainId),
+        );
+        // Sign the transaction
+        final signedTx = bytesToHex(signature, include0x: true);
+
+        response = response.copyWith(result: signedTx);
+      } on RPCError catch (e) {
+        debugPrint('[WALLET] ethSignTransaction error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: e.errorCode, message: e.message),
+        );
+      } catch (e) {
+        debugPrint('[WALLET] ethSignTransaction error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: 0, message: e.toString()),
+        );
+      }
+    } else {
+      response = response.copyWith(error: transaction as JsonRpcError);
+    }
+
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
+
+    CommonMethods.goBackToDapp(topic, response.result ?? response.error);
+  }
+
+  Future<void> ethSendTransaction(String topic, dynamic parameters) async {
+    debugPrint('[WALLET] ethSendTransaction request: $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
+    final data = EthUtils.getTransactionFromParams(parameters);
+    if (data == null) return;
+    var response = JsonRpcResponse(
+      id: pRequest.id,
+      jsonrpc: '2.0',
+    );
+
+    final transaction = await _approveTransaction(data);
+    if (transaction is Transaction) {
+      try {
+        // Load the private key
+        final keys = GetIt.I<IKeyService>().getKeysForChain(
+          chainSupported.chainId,
+        );
+
+        final pk = '0x${keys[0].privateKey}';
+        final credentials = EthPrivateKey.fromHex(pk);
+        final chainId = chainSupported.chainId.split(':').last;
+
+        final signedTx = await ethClient.sendTransaction(
+          credentials,
+          transaction,
+          chainId: int.parse(chainId),
+        );
+
+        response = response.copyWith(result: signedTx);
+      } on RPCError catch (e) {
+        debugPrint('[WALLET] ethSendTransaction error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: e.errorCode, message: e.message),
+        );
+      } catch (e) {
+        debugPrint('[WALLET] ethSendTransaction error $e');
+        response = response.copyWith(
+          error: JsonRpcError(code: 0, message: e.toString()),
+        );
+      }
+    } else {
+      response = response.copyWith(error: transaction as JsonRpcError);
+    }
+
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
+
+    CommonMethods.goBackToDapp(topic, response.result ?? response.error);
   }
 
   Future<void> switchChain(String topic, dynamic parameters) async {
-    debugPrint('received switchChain request: $topic $parameters');
-    final params = (parameters as List).first as Map<String, dynamic>;
-    final hexChainId = params['chainId'].toString().replaceFirst('0x', '');
-    final chainId = int.parse(hexChainId, radix: 16);
-    final web3wallet = _web3WalletService.getWeb3Wallet();
-    await web3wallet.emitSessionEvent(
-      topic: topic,
-      chainId: 'eip155:$chainId',
-      event: SessionEventParams(
-        name: 'chainChanged',
-        data: chainId,
-      ),
-    );
-  }
-
-  Future<void> addChain(String topic, dynamic parameters) async {
-    debugPrint('received addChain request: $topic $parameters');
-  }
-
-  Future<String?> requestApproval(String text) async {
-    final approved = await _bottomSheetService.queueBottomSheet(
-      widget: WCRequestWidget(
-        child: WCConnectionWidget(
-          title: 'Sign Transaction',
-          info: [
-            WCConnectionModel(text: text),
-          ],
+    debugPrint('[WALLET] switchChain request: $topic $parameters');
+    final pRequest = _web3Wallet.pendingRequests.getAll().last;
+    var response = JsonRpcResponse(id: pRequest.id, jsonrpc: '2.0');
+    try {
+      final params = (parameters as List).first as Map<String, dynamic>;
+      final hexChainId = params['chainId'].toString().replaceFirst('0x', '');
+      final chainId = int.parse(hexChainId, radix: 16);
+      await _web3Wallet.emitSessionEvent(
+        topic: topic,
+        chainId: 'eip155:$chainId',
+        event: SessionEventParams(
+          name: 'chainChanged',
+          data: chainId,
         ),
-      ),
-    );
-
-    if (approved != null && approved == false) {
-      return 'User rejected signature';
+      );
+      response = response.copyWith(result: true);
+    } on WalletConnectError catch (e) {
+      debugPrint('[WALLET] switchChain error $e');
+      response = response.copyWith(
+        error: JsonRpcError(code: e.code, message: e.message),
+      );
+    } catch (e) {
+      debugPrint('[WALLET] switchChain error $e');
+      response = response.copyWith(
+        error: JsonRpcError(code: 0, message: e.toString()),
+      );
     }
 
-    return null;
+    await _web3Wallet.respondSessionRequest(
+      topic: topic,
+      response: response,
+    );
+
+    CommonMethods.goBackToDapp(topic, true);
+  }
+
+  // Future<void> addChain(String topic, dynamic parameters) async {
+  //   debugPrint('[WALLET] addChain request: $topic $parameters');
+  //   final pRequest = _web3Wallet.pendingRequests.getAll().last;
+  //   await _web3Wallet.respondSessionRequest(
+  //     topic: topic,
+  //     response: JsonRpcResponse(
+  //       id: pRequest.id,
+  //       jsonrpc: '2.0',
+  //       result: true,
+  //     ),
+  //   );
+  //   CommonMethods.goBackToDapp(topic, true);
+  // }
+
+  Future<dynamic> _approveTransaction(Map<String, dynamic> tJson) async {
+    Transaction transaction = tJson.toTransaction();
+
+    final gasPrice = await ethClient.getGasPrice();
+    try {
+      final gasLimit = await ethClient.estimateGas(
+        sender: transaction.from,
+        to: transaction.to,
+        value: transaction.value,
+        data: transaction.data,
+        gasPrice: gasPrice,
+      );
+
+      transaction = transaction.copyWith(
+        gasPrice: gasPrice,
+        maxGas: gasLimit.toInt(),
+      );
+    } on RPCError catch (e) {
+      await _bottomSheetService.queueBottomSheet(
+        widget: Container(
+          color: Colors.white,
+          height: 210.0,
+          width: double.infinity,
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            children: [
+              Icon(
+                Icons.error_outline_sharp,
+                color: Colors.red[100],
+                size: 80.0,
+              ),
+              Text(
+                'Error',
+                style: StyleConstants.subtitleText.copyWith(
+                  color: Colors.black,
+                  fontSize: 18.0,
+                ),
+              ),
+              Text(e.message),
+            ],
+          ),
+        ),
+      );
+
+      return JsonRpcError(code: e.errorCode, message: e.message);
+    }
+
+    final gweiGasPrice = (transaction.gasPrice?.getInWei ?? BigInt.zero) /
+        BigInt.from(1000000000);
+
+    final WCBottomSheetResult rs = (await _bottomSheetService.queueBottomSheet(
+          widget: WCRequestWidget(
+            child: WCConnectionWidget(
+              title: 'Approve Transaction',
+              info: [
+                WCConnectionModel(elements: [jsonEncode(tJson)]),
+                WCConnectionModel(
+                  title: 'Gas price',
+                  elements: ['${gweiGasPrice.toStringAsFixed(2)} GWEI'],
+                ),
+              ],
+            ),
+          ),
+        )) ??
+        WCBottomSheetResult.reject;
+
+    if (rs != WCBottomSheetResult.reject) {
+      return transaction;
+    }
+
+    return const JsonRpcError(code: 5001, message: 'User rejected method');
+  }
+
+  void _onSessionRequest(SessionRequestEvent? args) async {
+    if (args != null && args.chainId == chainSupported.chainId) {
+      debugPrint('[WALLET] _onSessionRequest ${args.toString()}');
+      final handler = sessionRequestHandlers[args.method];
+      if (handler != null) {
+        await handler(args.topic, args.params);
+      }
+    }
+  }
+
+  bool isValidSignature(
+    String hexSignature,
+    String message,
+    String hexAddress,
+  ) {
+    try {
+      debugPrint('isValidSignature(): $hexSignature, $message, $hexAddress');
+      final recoveredAddress = EthSigUtil.recoverPersonalSignature(
+        signature: hexSignature,
+        message: utf8.encode(message),
+      );
+      debugPrint('recoveredAddress: $recoveredAddress');
+
+      final recoveredAddress2 = EthSigUtil.recoverSignature(
+        signature: hexSignature,
+        message: utf8.encode(message),
+      );
+      debugPrint('recoveredAddress2: $recoveredAddress2');
+
+      final isValid = recoveredAddress == hexAddress;
+      debugPrint('isValidSignature: $isValid');
+      return isValid;
+    } catch (e) {
+      debugPrint('isValidSignature() error, $e');
+      return false;
+    }
   }
 }

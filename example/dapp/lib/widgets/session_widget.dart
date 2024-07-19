@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:walletconnect_flutter_v2/walletconnect_flutter_v2.dart';
@@ -5,6 +6,8 @@ import 'package:walletconnect_flutter_v2_dapp/models/chain_metadata.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/constants.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/crypto/eip155.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/crypto/helpers.dart';
+import 'package:walletconnect_flutter_v2_dapp/utils/crypto/polkadot.dart';
+import 'package:walletconnect_flutter_v2_dapp/utils/crypto/solana.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/string_constants.dart';
 import 'package:walletconnect_flutter_v2_dapp/widgets/method_dialog.dart';
 
@@ -26,14 +29,6 @@ class SessionWidgetState extends State<SessionWidget> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> children = [
-      Text(
-        widget.session.peer.metadata.name,
-        style: StyleConstants.titleText,
-        textAlign: TextAlign.center,
-      ),
-      const SizedBox(
-        height: StyleConstants.linear16,
-      ),
       Text(
         '${StringConstants.sessionTopic}${widget.session.topic}',
       ),
@@ -67,10 +62,11 @@ class SessionWidgetState extends State<SessionWidget> {
         child: ElevatedButton(
           onPressed: () async {
             await widget.web3App.disconnectSession(
-                topic: widget.session.topic,
-                reason: Errors.getSdkError(
-                  Errors.USER_DISCONNECTED,
-                ));
+              topic: widget.session.topic,
+              reason: Errors.getSdkError(
+                Errors.USER_DISCONNECTED,
+              ),
+            );
           },
           style: ButtonStyle(
             backgroundColor: MaterialStateProperty.all<Color>(
@@ -85,19 +81,16 @@ class SessionWidgetState extends State<SessionWidget> {
       ),
     );
 
+    children.add(const SizedBox(height: 20.0));
     return ListView(
       children: children,
     );
   }
 
   Widget _buildAccountWidget(String namespaceAccount) {
-    final String chainId = NamespaceUtils.getChainFromAccount(
-      namespaceAccount,
-    );
-    final String account = NamespaceUtils.getAccount(
-      namespaceAccount,
-    );
-    final ChainMetadata chainMetadata = getChainMetadataFromChain(chainId);
+    final chainId = NamespaceUtils.getChainFromAccount(namespaceAccount);
+    final account = NamespaceUtils.getAccount(namespaceAccount);
+    final chainMetadata = getChainMetadataFromChain(chainId);
 
     final List<Widget> children = [
       Text(
@@ -120,12 +113,14 @@ class SessionWidgetState extends State<SessionWidget> {
       ),
     ];
 
-    children.addAll(
-      _buildChainMethodButtons(
-        chainMetadata,
-        account,
-      ),
-    );
+    children.addAll(_buildChainMethodButtons(chainMetadata, account));
+
+    children.add(const Divider());
+
+    if (chainId != 'eip155:11155111') {
+      children.add(const Text('Connect to Sepolia to Test'));
+    }
+    children.addAll(_buildSepoliaButtons(account, chainId));
 
     children.addAll([
       const SizedBox(
@@ -175,6 +170,8 @@ class SessionWidgetState extends State<SessionWidget> {
     final List<Widget> buttons = [];
     // Add Methods
     for (final String method in getChainMethods(chainMetadata.type)) {
+      final namespaces = widget.session.namespaces[chainMetadata.type.name];
+      final supported = namespaces?.methods.contains(method) ?? false;
       buttons.add(
         Container(
           width: double.infinity,
@@ -183,25 +180,22 @@ class SessionWidgetState extends State<SessionWidget> {
             vertical: StyleConstants.linear8,
           ),
           child: ElevatedButton(
-            onPressed: () async {
-              final walletUrl = widget.session.peer.metadata.redirect?.native;
-              if ((walletUrl ?? '').isNotEmpty) {
-                launchUrlString(
-                  walletUrl!,
-                  mode: LaunchMode.externalApplication,
-                );
-              }
-              Future<dynamic> future = callChainMethod(
-                chainMetadata.type,
-                method,
-                chainMetadata,
-                address,
-              );
-              MethodDialog.show(context, method, future);
-            },
+            onPressed: supported
+                ? () async {
+                    final future = callChainMethod(
+                      method,
+                      chainMetadata,
+                      address,
+                    );
+                    MethodDialog.show(context, method, future);
+                    _launchWallet();
+                  }
+                : null,
             style: ButtonStyle(
-              backgroundColor: MaterialStateProperty.all<Color>(
-                chainMetadata.color,
+              backgroundColor: MaterialStateProperty.resolveWith<Color>(
+                (states) => states.contains(MaterialState.disabled)
+                    ? Colors.grey
+                    : chainMetadata.color,
               ),
               shape: MaterialStateProperty.all<RoundedRectangleBorder>(
                 RoundedRectangleBorder(
@@ -224,9 +218,155 @@ class SessionWidgetState extends State<SessionWidget> {
     return buttons;
   }
 
+  Future<dynamic> callChainMethod(
+    String method,
+    ChainMetadata chainMetadata,
+    String address,
+  ) {
+    switch (chainMetadata.type) {
+      case ChainType.eip155:
+        return EIP155.callMethod(
+          web3App: widget.web3App,
+          topic: widget.session.topic,
+          method: method,
+          chainData: chainMetadata,
+          address: address,
+        );
+      case ChainType.polkadot:
+        return Polkadot.callMethod(
+          web3App: widget.web3App,
+          topic: widget.session.topic,
+          method: method,
+          chainId: chainMetadata.chainId,
+          address: address,
+        );
+      case ChainType.solana:
+        return Solana.callMethod(
+          web3App: widget.web3App,
+          topic: widget.session.topic,
+          method: method,
+          chainData: chainMetadata,
+          address: address,
+        );
+      // case ChainType.kadena:
+      //   return Kadena.callMethod(
+      //     web3App: widget.web3App,
+      //     topic: widget.session.topic,
+      //     method: method.toKadenaMethod()!,
+      //     chainId: chainMetadata.chainId,
+      //     address: address.toLowerCase(),
+      //   );
+      default:
+        throw 'Unimplemented';
+    }
+  }
+
+  void _launchWallet() {
+    if (kIsWeb) return;
+    final walletUrl = widget.session.peer.metadata.redirect?.native;
+    if ((walletUrl ?? '').isNotEmpty) {
+      launchUrlString(
+        walletUrl!,
+        mode: LaunchMode.externalApplication,
+      );
+    }
+  }
+
+  List<Widget> _buildSepoliaButtons(String address, String chainId) {
+    final List<Widget> buttons = [];
+    final enabled = chainId == 'eip155:11155111';
+    buttons.add(
+      Container(
+        width: double.infinity,
+        height: StyleConstants.linear48,
+        margin: const EdgeInsets.symmetric(
+          vertical: StyleConstants.linear8,
+        ),
+        child: ElevatedButton(
+          onPressed: enabled
+              ? () async {
+                  final future = EIP155.callSmartContract(
+                    web3App: widget.web3App,
+                    topic: widget.session.topic,
+                    address: address,
+                    action: 'read',
+                  );
+                  MethodDialog.show(context, 'Test Contract (Read)', future);
+                }
+              : null,
+          style: ButtonStyle(
+            backgroundColor: MaterialStateProperty.resolveWith<Color>((states) {
+              if (states.contains(MaterialState.disabled)) {
+                return StyleConstants.grayColor;
+              }
+              return Colors.orange;
+            }),
+            shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+              RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(
+                  StyleConstants.linear8,
+                ),
+              ),
+            ),
+          ),
+          child: const Text(
+            'Test Contract (Read)',
+            style: StyleConstants.buttonText,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+    buttons.add(
+      Container(
+        width: double.infinity,
+        height: StyleConstants.linear48,
+        margin: const EdgeInsets.symmetric(
+          vertical: StyleConstants.linear8,
+        ),
+        child: ElevatedButton(
+          onPressed: enabled
+              ? () async {
+                  final future = EIP155.callSmartContract(
+                    web3App: widget.web3App,
+                    topic: widget.session.topic,
+                    address: address,
+                    action: 'write',
+                  );
+                  MethodDialog.show(context, 'Test Contract (Write)', future);
+                  _launchWallet();
+                }
+              : null,
+          style: ButtonStyle(
+            backgroundColor: MaterialStateProperty.resolveWith<Color>((states) {
+              if (states.contains(MaterialState.disabled)) {
+                return StyleConstants.grayColor;
+              }
+              return Colors.orange;
+            }),
+            shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+              RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(
+                  StyleConstants.linear8,
+                ),
+              ),
+            ),
+          ),
+          child: const Text(
+            'Test Contract (Write)',
+            style: StyleConstants.buttonText,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+
+    return buttons;
+  }
+
   List<Widget> _buildChainEventsTiles(ChainMetadata chainMetadata) {
     final List<Widget> values = [];
-    // Add Methods
+
     for (final String event in getChainEvents(chainMetadata.type)) {
       values.add(
         Container(
@@ -257,33 +397,5 @@ class SessionWidgetState extends State<SessionWidget> {
     }
 
     return values;
-  }
-
-  Future<dynamic> callChainMethod(
-    ChainType type,
-    String method,
-    ChainMetadata chainMetadata,
-    String address,
-  ) {
-    switch (type) {
-      case ChainType.eip155:
-        return EIP155.callMethod(
-          web3App: widget.web3App,
-          topic: widget.session.topic,
-          method: method.toEip155Method()!,
-          chainId: chainMetadata.chainId,
-          address: address.toLowerCase(),
-        );
-      // case ChainType.kadena:
-      //   return Kadena.callMethod(
-      //     web3App: widget.web3App,
-      //     topic: widget.session.topic,
-      //     method: method.toKadenaMethod()!,
-      //     chainId: chainMetadata.chainId,
-      //     address: address.toLowerCase(),
-      //   );
-      default:
-        return Future<dynamic>.value();
-    }
   }
 }
