@@ -1027,7 +1027,11 @@ class SignEngine implements ISignEngine {
 
       // If there are accounts and event emitters, then handle the Namespace generate automatically
       Map<String, Namespace>? namespaces;
-      if (_accounts.isNotEmpty || _eventEmitters.isNotEmpty) {
+
+      /// [Workaround] bypass validation for the required namespaces
+      /// TL will handle missing chain later when user performs the action
+      // if (_accounts.isNotEmpty || _eventEmitters.isNotEmpty) {
+      if (false) {
         namespaces = NamespaceUtils.constructNamespaces(
           availableAccounts: _accounts,
           availableMethods: _methodHandlers.keys.toSet(),
