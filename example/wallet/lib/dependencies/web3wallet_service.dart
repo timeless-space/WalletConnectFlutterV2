@@ -27,6 +27,7 @@ class Web3WalletService extends IWeb3WalletService {
   @override
   Future<void> create() async {
     // Create the web3wallet
+    const flavor = String.fromEnvironment('FLUTTER_APP_FLAVOR');
     _web3Wallet = Web3Wallet(
       core: Core(
         projectId: DartDefines.projectId,
@@ -39,8 +40,8 @@ class Web3WalletService extends IWeb3WalletService {
           'https://docs.walletconnect.com/assets/images/web3walletLogo-54d3b546146931ceaf47a3500868a73a.png'
         ],
         redirect: Redirect(
-          native: 'wcflutterwallet://',
-          universal: 'https://walletconnect.com',
+          native: 'wcflutterwallet-$flavor://',
+          // universal: 'https://walletconnect.com',
         ),
       ),
     );

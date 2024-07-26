@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:developer';
 
-import 'package:walletconnect_flutter_v2/walletconnect_flutter_v2.dart';
+import 'package:flutter/material.dart';
+
 import 'package:walletconnect_flutter_v2_dapp/models/chain_metadata.dart';
 import 'package:walletconnect_flutter_v2_dapp/models/page_data.dart';
 import 'package:walletconnect_flutter_v2_dapp/pages/auth_page.dart';
@@ -9,12 +10,13 @@ import 'package:walletconnect_flutter_v2_dapp/pages/connect_page.dart';
 import 'package:walletconnect_flutter_v2_dapp/pages/pairings_page.dart';
 import 'package:walletconnect_flutter_v2_dapp/pages/sessions_page.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/constants.dart';
-import 'package:flutter/material.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/crypto/chain_data.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/crypto/helpers.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/dart_defines.dart';
 import 'package:walletconnect_flutter_v2_dapp/utils/string_constants.dart';
 import 'package:walletconnect_flutter_v2_dapp/widgets/event_widget.dart';
+
+import 'package:walletconnect_flutter_v2_dapp/imports.dart';
 
 void main() {
   runApp(const MyApp());
@@ -58,6 +60,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> initialize() async {
+    const flavor = String.fromEnvironment('FLUTTER_APP_FLAVOR');
     _web3App = Web3App(
       core: Core(
         projectId: DartDefines.projectId,
@@ -70,8 +73,8 @@ class _MyHomePageState extends State<MyHomePage> {
           'https://images.prismic.io/wallet-connect/65785a56531ac2845a260732_WalletConnect-App-Logo-1024X1024.png'
         ],
         redirect: Redirect(
-          native: 'wcflutterdapp://',
-          universal: 'https://walletconnect.com',
+          native: 'wcflutterdapp-$flavor://',
+          // universal: 'https://walletconnect.com',
         ),
       ),
     );
